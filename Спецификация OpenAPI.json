@@ -10,7 +10,7 @@
         "tags": [
           "Admin"
         ],
-        "summary": "Аунтификация.",
+        "summary": "Аутентификация.",
         "requestBody": {
           "content": {
             "application/json": {

@@ -1,134 +1,141 @@
 using TR.Connectors.Api.Entities;
 using TR.Connectors.Api.Interfaces;
 
-namespace TR.Connector.Tests
+namespace TR.Connector.Tests;
+
+public class ConnectorTests : IAsyncLifetime
 {
-    public class ConnectorTests
+    private readonly IConnector _connector;
+    private readonly string _connectorString = "url=http://localhost:5000;login=login;password=password";
+
+    public ConnectorTests()
     {
-        private readonly IConnector _connector;
-        private readonly string connectorString = "url=http://localhost:5000;login=login;password=password";
+        _connector = new Connector();
+        _connector.SetLogger(new ConsoleLogger());
+    }
 
-        public ConnectorTests()
+    public async Task InitializeAsync()
+    {
+        await _connector.StartUpAsync(_connectorString);
+    }
+
+    public Task DisposeAsync()
+    {
+        _connector.Dispose();
+        return Task.CompletedTask;
+    }
+
+    [Fact]
+    public async Task GetAllPermissions_Ok()
+    {
+        var permissions = (await _connector.GetAllPermissions()).ToList();
+        Assert.NotNull(permissions);
+
+        var itRole9 = permissions.FirstOrDefault(p => p.Name == "ITRole9");
+        Assert.NotNull(itRole9);
+        Assert.Equal("ItRole,9", itRole9.Id);
+
+        var requestRight5 = permissions.FirstOrDefault(p => p.Name == "RequestRight5");
+        Assert.NotNull(requestRight5);
+        Assert.Equal("RequestRight,5", requestRight5.Id);
+    }
+
+    [Fact]
+    public async Task GetUserPermissions_Ok()
+    {
+        const string login = "Login3";
+        var permissions = (await _connector.GetUserPermissions(login)).ToList();
+
+        Assert.NotNull(permissions);
+        Assert.NotNull(permissions.FirstOrDefault(s => s.Contains("ItRole")));
+        Assert.NotNull(permissions.FirstOrDefault(s => s.Contains("RequestRight")));
+    }
+
+    [Fact]
+    public async Task Add_Drop_Permissions_Ok()
+    {
+        const string login = "Login7";
+        const string userRole = "ItRole,5";
+        const string userRight = "RequestRight,5";
+        await _connector.AddUserPermissions(login, new List<string>(){userRole, userRight});
+
+        var userPermissions = (await _connector.GetUserPermissions(login)).ToList();
+        Assert.NotNull(userPermissions.FirstOrDefault(x => x.Contains(userRole)));
+        Assert.NotNull(userPermissions.FirstOrDefault(x => x.Contains(userRight)));
+
+        await _connector.RemoveUserPermissions(login, new List<string>(){userRole, userRight});
+
+        userPermissions = (await _connector.GetUserPermissions(login)).ToList();
+        Assert.Null(userPermissions.FirstOrDefault(x => x.Contains(userRole)));
+        Assert.Null(userPermissions.FirstOrDefault(x => x.Contains(userRight)));
+    }
+
+    [Fact]
+    public void GetAllProperties_Ok()
+    {
+        var allProperties = _connector.GetAllProperties();
+
+        Assert.NotNull(allProperties);
+        Assert.NotNull(allProperties.FirstOrDefault(p => p.Name.Contains("isLead")));
+    }
+
+    [Fact]
+    public async Task Get_UpdateUserProperties_Ok()
+    {
+        const string login = "Login3";
+        var userProperties = (await _connector.GetUserProperties(login)).ToList();
+        Assert.NotNull(userProperties);
+
+        var firstNameProperty = userProperties.FirstOrDefault(p => p.Name == "firstName");
+        Assert.NotNull(firstNameProperty);
+        Assert.Equal("FirstName3", firstNameProperty.Value);
+        
+        var telephoneNumberProperty = userProperties.FirstOrDefault(p => p.Name == "telephoneNumber");
+        Assert.NotNull(telephoneNumberProperty);
+        Assert.Equal("TelephoneNumber3", telephoneNumberProperty.Value);
+
+        var userProps = new List<UserProperty>()
         {
-            _connector = new Connector();
+            new UserProperty("firstName", "FirstName13"),
+            new UserProperty("telephoneNumber", "TelephoneNumber13"),
+        };
+        await _connector.UpdateUserProperties(userProps, login);
 
-            _connector.Logger = new ConsoleLogger();
-            _connector.StartUp(connectorString);
-        }
+        userProperties = (await _connector.GetUserProperties(login)).ToList();
+        Assert.NotNull(userProperties);
 
-        [Fact]
-        public void GetAllPermissions_Ok()
+        firstNameProperty = userProperties.FirstOrDefault(p => p.Name == "firstName");
+        Assert.NotNull(firstNameProperty);
+        Assert.Equal("FirstName13", firstNameProperty.Value);
+        
+        telephoneNumberProperty = userProperties.FirstOrDefault(p => p.Name == "telephoneNumber");
+        Assert.NotNull(telephoneNumberProperty);
+        Assert.Equal("TelephoneNumber13", telephoneNumberProperty.Value);
+    }
+
+    [Fact]
+    public async Task Get_CreateUser_Ok()
+    {
+        const string login = "Login100";
+
+        var isUser = await _connector.IsUserExists(login);
+        Assert.False(isUser);
+
+        var user = new UserToCreate(login, "Password100")
         {
-            var permissions = _connector.GetAllPermissions();
-            Assert.NotNull(permissions);
-
-            var ItRole9 = permissions.FirstOrDefault(_ => _.Name == "ITRole9");
-            Assert.Equal("ItRole,9", ItRole9.Id);
-
-            var RequestRight5 = permissions.FirstOrDefault(_ => _.Name == "RequestRight5");
-            Assert.Equal("RequestRight,5", RequestRight5.Id);
-        }
-
-        [Fact]
-        public void GetUserPermissions_Ok()
-        {
-            var login = "Login3";
-            var permissions = _connector.GetUserPermissions(login).ToList();
-
-            Assert.NotNull(permissions);
-            Assert.NotNull(permissions.FirstOrDefault(_ => _.Contains("ItRole")));
-            Assert.NotNull(permissions.FirstOrDefault(_ => _.Contains("RequestRight")));
-        }
-
-        /*[Fact]
-        public void GetUserPermissions1_Ok()
-        {
-            var login = "Login4"; //lock
-
-            //Сейчас не пройдет. сервак вернет ошибку "Пользователь Login4 заблокирован".
-            var permissions = _connector.GetUserPermissions(login);
-
-            Assert.NotNull(permissions);
-            Assert.Empty(permissions);
-        }*/
-
-        [Fact]
-        public void Add_Drop_Permissions_Ok()
-        {
-            var login = "Login7";
-            var userRole = "ItRole,5";
-            var userRight = "RequestRight,5";
-            _connector.AddUserPermissions(login, new List<string>(){userRole, userRight});
-
-            var userPermissions = _connector.GetUserPermissions(login).ToList();
-            Assert.NotNull(userPermissions.FirstOrDefault(_ => _.Contains(userRole)));
-            Assert.NotNull(userPermissions.FirstOrDefault(_ => _.Contains(userRight)));
-
-            _connector.RemoveUserPermissions(login, new List<string>(){userRole, userRight});
-
-            userPermissions = _connector.GetUserPermissions(login).ToList();
-            Assert.Null(userPermissions.FirstOrDefault(_ => _.Contains(userRole)));
-            Assert.Null(userPermissions.FirstOrDefault(_ => _.Contains(userRight)));
-        }
-
-        [Fact]
-        public void GetAllProperties_Ok()
-        {
-            var allProperties = _connector.GetAllProperties();
-
-            Assert.NotNull(allProperties);
-            Assert.NotNull(allProperties.FirstOrDefault(_ => _.Name.Contains("isLead")));
-        }
-
-        [Fact]
-        public void Get_UpdateUserProperties_Ok()
-        {
-            var login = "Login3";
-            var userProperties = _connector.GetUserProperties(login);
-            Assert.NotNull(userProperties);
-
-            Assert.Equal("FirstName3", userProperties.FirstOrDefault(_ => _.Name == "firstName").Value);
-            Assert.Equal("TelephoneNumber3", userProperties.FirstOrDefault(_ => _.Name == "telephoneNumber").Value);
-
-            var userProps = new List<UserProperty>()
+            Properties = new List<UserProperty>()
             {
-                new UserProperty("firstName", "FirstName13"),
-                new UserProperty("telephoneNumber", "TelephoneNumber13"),
-            };
-            _connector.UpdateUserProperties(userProps, login);
+                new UserProperty("firstName", "FirstName100"),
+                new UserProperty("lastName", ""),
+                new UserProperty("middleName", ""),
+                new UserProperty("telephoneNumber", ""),
+                new UserProperty("isLead", ""),
+            }
+        };
 
+        await _connector.CreateUser(user);
 
-            userProperties = _connector.GetUserProperties(login);
-            Assert.NotNull(userProperties);
-
-            Assert.Equal("FirstName13", userProperties.FirstOrDefault(_ => _.Name == "firstName").Value);
-            Assert.Equal("TelephoneNumber13", userProperties.FirstOrDefault(_ => _.Name == "telephoneNumber").Value);
-        }
-
-        [Fact]
-        public void Get_CreateUser_Ok()
-        {
-            var login = "Login100";
-
-            var isUser = _connector.IsUserExists(login);
-            Assert.False(isUser);
-
-            var user = new UserToCreate(login, "Password100")
-            {
-                Properties = new List<UserProperty>()
-                {
-                    new UserProperty("firstName", "FirstName100"),
-                    new UserProperty("lastName", ""),
-                    new UserProperty("middleName", ""),
-                    new UserProperty("telephoneNumber", ""),
-                    new UserProperty("isLead", ""),
-                }
-            };
-
-            _connector.CreateUser(user);
-
-            isUser = _connector.IsUserExists(login);
-            Assert.True(isUser);
-        }
+        isUser = await _connector.IsUserExists(login);
+        Assert.True(isUser);
     }
 }

@@ -5,7 +5,7 @@ VisualStudioVersion = 17.11.35327.3
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "docs", "docs", "{8F72E0A8-792B-4ED8-92C6-A15C20C7B6E7}"
 	ProjectSection(SolutionItems) = preProject
-		Описание системы и техническое задание.md = Описание системы и техническое задание.md
+	    Readme.md = Readme.md
 		Спецификация OpenAPI.json = Спецификация OpenAPI.json
 	EndProjectSection
 EndProject
