@@ -146,30 +146,30 @@ public class Connector : IConnector
     public async Task<IEnumerable<string>> GetUserPermissionsAsync(string userLogin)
     {
         //Получаем ИТРоли
-        var result1 = await GetUserPermissionsInternalAsync($"api/v1/users/{userLogin}/roles", x => $"ItRole,{x.Id}");
+        var result1 = await GetUserPermissionsInternalAsync($"api/v1/users/{userLogin}/roles", "роли", x => $"ItRole,{x.Id}");
 
         //Получаем права
-        var result2 = await GetUserPermissionsInternalAsync($"api/v1/users/{userLogin}/rights", x => $"RequestRight,{x.Id}");
+        var result2 = await GetUserPermissionsInternalAsync($"api/v1/users/{userLogin}/rights", "права", x => $"RequestRight,{x.Id}");
 
         return result1.Concat(result2).ToList();
     }
 
-    private async Task<IEnumerable<string>> GetUserPermissionsInternalAsync(string url, Func<RoleResponseData, string> builder)
+    private async Task<IEnumerable<string>> GetUserPermissionsInternalAsync(string url, string entityName, Func<RoleResponseData, string> builder)
     {
         var requestResult = await GetAsync<UserRoleResponse>(url);
 
         if (!requestResult.IsSuccess)
         {
-            throw new InvalidOperationException($"Не удалось получить права пользователя: {requestResult.Error}");
+            throw new InvalidOperationException($"Не удалось получить {entityName} пользователя: {requestResult.Error}");
         }
 
         if (!requestResult.Value.Success)
         {
-            throw new InvalidOperationException($"Не удалось получить права пользователя: {requestResult.Value.ErrorText}");
+            throw new InvalidOperationException($"Не удалось получить {entityName} пользователя: {requestResult.Value.ErrorText}");
         }
 
-        return requestResult.Value.Data == null 
-            ? throw new InvalidOperationException("Не удалось получить права пользователя")
+        return requestResult.Value.Data == null
+            ? throw new InvalidOperationException($"Не удалось получить {entityName} пользователя")
             : requestResult.Value.Data.Select(builder).ToList();
     }
 
@@ -291,12 +291,7 @@ public class Connector : IConnector
             throw new InvalidOperationException($"Не удалось получить пользователя: {getUserResult.Error}");
         }
 
-        if (getUserResult.Value.Data == null)
-        {
-            throw new UserNotFoundException($"Пользователь {userLogin} не найден");
-        }
-
-        return getUserResult.Value.Data;
+        return getUserResult.Value.Data ?? throw new UserNotFoundException($"Пользователь {userLogin} не найден");
     }
 
     public async Task UpdateUserPropertiesAsync(IEnumerable<UserProperty> properties, string userLogin)
