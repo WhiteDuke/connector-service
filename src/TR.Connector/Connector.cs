@@ -19,6 +19,7 @@ public class Connector : IConnector
     private string _token = string.Empty;
 
     private readonly HttpClient _httpClient;
+    private const string AppJsonMimeType = "application/json";
 
     //Пустой конструктор
     public Connector()
@@ -167,44 +168,44 @@ public class Connector : IConnector
             throw new InvalidOperationException($"Не удалось получить права пользователя: {requestResult.Value.ErrorText}");
         }
 
-        if (requestResult.Value.Data == null)
-        {
-            throw new InvalidOperationException("Не удалось получить права пользователя");
-        }
-
-        return requestResult.Value.Data.Select(builder).ToList();
+        return requestResult.Value.Data == null 
+            ? throw new InvalidOperationException("Не удалось получить права пользователя")
+            : requestResult.Value.Data.Select(builder).ToList();
     }
 
     public async Task AddUserPermissionsAsync(string userLogin, IEnumerable<string> rightIds)
     {
         //проверяем что пользователь не залочен.
-        var response = await _httpClient.GetAsync("api/v1/users/all");
-        var userResponse = JsonSerializer.Deserialize<UserResponse>(await response.Content.ReadAsStringAsync());
-        var user = userResponse.Data.FirstOrDefault(x => x.Login == userLogin);
+        var user = await GetUserAsync(userLogin);
 
-        if (user != null && user.Status == "Lock")
+        switch (user.Status)
         {
-            Logger.Error($"Пользователь {userLogin} залочен.");
-            return;
-        }
-
-        //Назначаем права.
-        if (user != null && user.Status == "Unlock")
-        {
-            foreach (var rightId in rightIds)
+            //проверяем что пользователь не залочен.
+            case "Lock":
             {
-                var rightStr = rightId.Split(',');
-                switch (rightStr[0])
+                Logger.Error($"Пользователь {userLogin} залочен.");
+                throw new UserLockedException($"Пользователь {userLogin} залочен.");
+            }
+            //Назначаем права.
+            case "Unlock":
+            {
+                foreach (var rightId in rightIds)
                 {
-                    case "ItRole":
-                        await _httpClient.PutAsync($"api/v1/users/{userLogin}/add/role/{rightStr[1]}", null);
-                        break;
-                    case "RequestRight":
-                        await _httpClient.PutAsync($"api/v1/users/{userLogin}/add/right/{rightStr[1]}", null);
-                        break;
-                    default: 
-                        throw new Exception($"Тип доступа {rightStr[0]} не определен");
+                    var rightStr = rightId.Split(',');
+                    switch (rightStr[0])
+                    {
+                        case "ItRole":
+                            await _httpClient.PutAsync($"api/v1/users/{userLogin}/add/role/{rightStr[1]}", null);
+                            break;
+                        case "RequestRight":
+                            await _httpClient.PutAsync($"api/v1/users/{userLogin}/add/right/{rightStr[1]}", null);
+                            break;
+                        default: 
+                            throw new Exception($"Тип доступа {rightStr[0]} не определен");
+                    }
                 }
+
+                break;
             }
         }
     }
@@ -212,33 +213,34 @@ public class Connector : IConnector
     public async Task RemoveUserPermissionsAsync(string userLogin, IEnumerable<string> rightIds)
     {
         //проверяем что пользователь не залочен.
-        var response = await _httpClient.GetAsync("api/v1/users/all");
-        var userResponse = JsonSerializer.Deserialize<UserResponse>(await response.Content.ReadAsStringAsync());
-        var user = userResponse.Data.FirstOrDefault(d => d.Login == userLogin);
+        var user = await GetUserAsync(userLogin);
 
-        if (user != null && user.Status == "Lock")
+        switch (user.Status)
         {
-            Logger.Error($"Пользователь {userLogin} залочен.");
-            return;
-        }
-
-        //отзываем права.
-        if (user != null && user.Status == "Unlock")
-        {
-            foreach (var rightId in rightIds)
+            case "Lock":
             {
-                var rightStr = rightId.Split(',');
-                switch (rightStr[0])
+                Logger.Error($"Пользователь {userLogin} залочен.");
+                throw new UserLockedException($"Невозможно получить свойства, пользователь {userLogin} залочен");
+            }
+            //отзываем права.
+            case "Unlock":
+            {
+                foreach (var rightId in rightIds)
                 {
-                    case "ItRole":
-                        await _httpClient.DeleteAsync($"api/v1/users/{userLogin}/drop/role/{rightStr[1]}");
-                        break;
-                    case "RequestRight":
-                        await _httpClient.DeleteAsync($"api/v1/users/{userLogin}/drop/right/{rightStr[1]}");
-                        break;
-                    default:
-                        throw new Exception($"Тип доступа {rightStr[0]} не определен");
+                    var rightStr = rightId.Split(',');
+                    switch (rightStr[0])
+                    {
+                        case "ItRole":
+                            await _httpClient.DeleteAsync($"api/v1/users/{userLogin}/drop/role/{rightStr[1]}");
+                            break;
+                        case "RequestRight":
+                            await _httpClient.DeleteAsync($"api/v1/users/{userLogin}/drop/right/{rightStr[1]}");
+                            break;
+                        default:
+                            throw new Exception($"Тип доступа {rightStr[0]} не определен");
+                    }
                 }
+                break;
             }
         }
     }
@@ -269,19 +271,7 @@ public class Connector : IConnector
     /// <exception cref="UserLockedException"></exception>
     public async Task<IEnumerable<UserProperty>> GetUserPropertiesAsync(string userLogin)
     {
-        var getUserResult = await GetAsync<UserPropertyResponse>($"api/v1/users/{userLogin}");
-
-        if (!getUserResult.IsSuccess)
-        {
-            throw new InvalidOperationException($"Не удалось получить свойства пользователя: {getUserResult.Error}");
-        }
-
-        if (getUserResult.Value.Data == null)
-        {
-            throw new UserNotFoundException($"Пользователь {userLogin} не найден");
-        }
-
-        var user = getUserResult.Value.Data;
+        var user = await GetUserAsync(userLogin);
 
         if (user.Status == "Lock")
         {
@@ -290,6 +280,23 @@ public class Connector : IConnector
 
         return user.GetType().GetProperties()
             .Select(x => new UserProperty(x.Name, x.GetValue(user) as string));
+    }
+
+    private async Task<UserPropertyData> GetUserAsync(string userLogin)
+    {
+        var getUserResult = await GetAsync<UserPropertyResponse>($"api/v1/users/{userLogin}");
+
+        if (!getUserResult.IsSuccess)
+        {
+            throw new InvalidOperationException($"Не удалось получить пользователя: {getUserResult.Error}");
+        }
+
+        if (getUserResult.Value.Data == null)
+        {
+            throw new UserNotFoundException($"Пользователь {userLogin} не найден");
+        }
+
+        return getUserResult.Value.Data;
     }
 
     public async Task UpdateUserPropertiesAsync(IEnumerable<UserProperty> properties, string userLogin)
@@ -324,7 +331,8 @@ public class Connector : IConnector
             }
         }
 
-        var content = new StringContent(JsonSerializer.Serialize(user), Encoding.UTF8, "application/json");
+        // TODO:
+        var content = new StringContent(JsonSerializer.Serialize(user), Encoding.UTF8, AppJsonMimeType);
         await _httpClient.PutAsync("api/v1/users/edit", content);
     }
 
@@ -340,6 +348,10 @@ public class Connector : IConnector
         return user != null;
     }
 
+    /// <summary>
+    /// Создаёт пользователя в системе.
+    /// </summary>
+    /// <param name="user"></param>
     public async Task CreateUserAsync(UserToCreate user)
     {
         var newUser = new CreateUserDto()
@@ -358,7 +370,8 @@ public class Connector : IConnector
             Status = string.Empty
         };
 
-        var content = new StringContent(JsonSerializer.Serialize(newUser), Encoding.UTF8, "application/json");
+        // TODO:
+        var content = new StringContent(JsonSerializer.Serialize(newUser), Encoding.UTF8, AppJsonMimeType);
         await _httpClient.PostAsync("api/v1/users/create", content);
 
         //var result = await PostAsync<CreateUserDto>();
@@ -368,7 +381,7 @@ public class Connector : IConnector
     {
         try
         {
-            var requestBody = new StringContent(JsonSerializer.Serialize(data), Encoding.UTF8, "application/json");
+            var requestBody = new StringContent(JsonSerializer.Serialize(data), Encoding.UTF8, AppJsonMimeType);
             var response = await _httpClient.PostAsync(endpoint, requestBody);
             response.EnsureSuccessStatusCode();
 
@@ -381,7 +394,9 @@ public class Connector : IConnector
 
             var result = JsonSerializer.Deserialize<T>(responseBody);
 
-            return RequestResult<T>.Successful(result);
+            return result == null 
+                ? RequestResult<T>.Failed("Нет данных")
+                : RequestResult<T>.Successful(result);
         }
         catch (HttpRequestException ex)
         {
@@ -415,7 +430,10 @@ public class Connector : IConnector
             }
 
             var result = JsonSerializer.Deserialize<T>(content);
-            return RequestResult<T>.Successful(result);
+
+            return result == null 
+                ? RequestResult<T>.Failed("Нет данных")
+                : RequestResult<T>.Successful(result);
         }
         catch (HttpRequestException ex)
         {
@@ -431,19 +449,6 @@ public class Connector : IConnector
         {
             Logger.Error($"Ошибка при запросе к {endpoint}: {ex.Message}");
             return RequestResult<T>.Failed("Возникла ошибка при запросе к серверу");
-        }
-    }
-
-    private async Task SendRequestAsync(string endpoint)
-    {
-        try
-        {
-            await _httpClient.GetAsync(endpoint);
-        }
-        catch (Exception ex)
-        {
-            Logger.Error($"Ошибка при запросе к {endpoint}: {ex.Message}");
-            throw;
         }
     }
 
