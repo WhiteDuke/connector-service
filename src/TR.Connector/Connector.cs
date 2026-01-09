@@ -1,6 +1,7 @@
 ﻿using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using TR.Connector.Exceptions;
 using TR.Connector.Models;
 using TR.Connectors.Api.Entities;
 using TR.Connectors.Api.Interfaces;
@@ -11,11 +12,11 @@ public class Connector : IConnector
 {
     public ILogger Logger { get; private set; }
 
-    private string _url = "";
-    private string _login = "";
-    private string _password = "";
+    private string _url = string.Empty;
+    private string _login = string.Empty;
+    private string _password = string.Empty;
 
-    private string _token = "";
+    private string _token = string.Empty;
 
     private readonly HttpClient _httpClient;
 
@@ -34,7 +35,7 @@ public class Connector : IConnector
     {
         if (Logger == null)
         {
-            throw new Exception("Logger is not set");
+            throw new ConnectorInitializationException("Logger is not set");
         }
 
         //Парсим строку подключения.
@@ -59,54 +60,125 @@ public class Connector : IConnector
             }
         }
 
+        if (string.IsNullOrWhiteSpace(_url) 
+            || string.IsNullOrWhiteSpace(_login)
+            || string.IsNullOrWhiteSpace(_password))
+        {
+            throw new ConnectorInitializationException("Incorrect connection string");
+        }
+
         //Проходим аунтификацию на сервере.
         _httpClient.BaseAddress = new Uri(_url);
-        var body = new { login = _login, password = _password };
-        var content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
-        var response = await _httpClient.PostAsync("api/v1/login", content);
-        var tokenResponse = JsonSerializer.Deserialize<TokenResponse>(await response.Content.ReadAsStringAsync());
-        _token = tokenResponse.Data.AccessToken;
-        // TODO: добавить обработку ошибок
+        var loginDto = new LoginUserDto(_login, _password);
+        var tokenRequestResult = await PostAsync<TokenResponse, LoginUserDto> ("api/v1/login", loginDto);
 
+        if (!tokenRequestResult.IsSuccess)
+        {
+            throw new ConnectorInitializationException(tokenRequestResult.Error);
+        }
+
+        if (!tokenRequestResult.Value.Success)
+        {
+            throw new ConnectorInitializationException(tokenRequestResult.Value.ErrorText);
+        }
+
+        _token = tokenRequestResult.Value.Data.AccessToken;
         _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _token);
     }
 
-    public async Task<IEnumerable<Permission>> GetAllPermissions()
+    public async Task<IEnumerable<Permission>> GetAllPermissionsAsync()
     {
         //Получаем ИТРоли
-        var response = await _httpClient.GetAsync("api/v1/roles/all");
-        var itRoleResponse = JsonSerializer.Deserialize<RoleResponse>(await response.Content.ReadAsStringAsync());
-        var itRolePermissions =
-            itRoleResponse.Data.Select(x => new Permission($"ItRole,{x.Id}", x.Name, x.CorporatePhoneNumber));
+        var rolePermissions = await GetPermissionsInternalAsync();
 
         //Получаем права
-        response = await _httpClient.GetAsync("api/v1/rights/all");
-        var rightResponse = JsonSerializer.Deserialize<RoleResponse>(await response.Content.ReadAsStringAsync());
-        var rightPermissions = rightResponse.Data.Select(x =>
-            new Permission($"RequestRight,{x.Id}", x.Name, x.CorporatePhoneNumber));
+        var rightPermissions = await GetRightsInternalAsync();
 
-        return itRolePermissions.Concat(rightPermissions);
+        return rolePermissions.Concat(rightPermissions);
     }
 
-    public async Task<IEnumerable<string>> GetUserPermissions(string userLogin)
+    private async Task<IEnumerable<Permission>> GetPermissionsInternalAsync()
+    {
+        var permissionRequestResult = await GetAsync<RoleResponse>("api/v1/roles/all");
+
+        if (!permissionRequestResult.IsSuccess)
+        {
+            throw new InvalidOperationException($"Не удалось получить роли: {permissionRequestResult.Error}");
+        }
+
+        if (!permissionRequestResult.Value.Success)
+        {
+            throw new InvalidOperationException($"Не удалось получить роли: {permissionRequestResult.Value.ErrorText}");
+        }
+
+        if (permissionRequestResult.Value.Data == null)
+        {
+            throw new InvalidOperationException("Не удалось получить роли");
+        }
+        
+        return permissionRequestResult.Value.Data.Select(x => new Permission($"ItRole,{x.Id}", x.Name, x.CorporatePhoneNumber)); 
+    }
+    
+    private async Task<IEnumerable<Permission>> GetRightsInternalAsync()
+    {
+        var rightsRequestResult = await GetAsync<RoleResponse>("api/v1/rights/all");
+
+        if (!rightsRequestResult.IsSuccess)
+        {
+            throw new InvalidOperationException($"Не удалось получить права: {rightsRequestResult.Error}");
+        }
+
+        if (!rightsRequestResult.Value.Success)
+        {
+            throw new InvalidOperationException($"Не удалось получить права: {rightsRequestResult.Value.ErrorText}");
+        }
+
+        if (rightsRequestResult.Value.Data == null)
+        {
+            throw new InvalidOperationException("Не удалось получить права");
+        }
+
+        return rightsRequestResult.Value.Data.Select(x =>
+            new Permission($"RequestRight,{x.Id}", x.Name, x.CorporatePhoneNumber));
+    }
+
+    public async Task<IEnumerable<string>> GetUserPermissionsAsync(string userLogin)
     {
         //Получаем ИТРоли
-        var response = await _httpClient.GetAsync($"api/v1/users/{userLogin}/roles");
-        var itRoleResponse = JsonSerializer.Deserialize<UserRoleResponse>(await response.Content.ReadAsStringAsync());
-        var result1 = itRoleResponse.Data.Select(x => $"ItRole,{x.Id}").ToList();
+        var result1 = await GetUserPermissionsInternalAsync($"api/v1/users/{userLogin}/roles", x => $"ItRole,{x.Id}");
 
         //Получаем права
-        response = await _httpClient.GetAsync($"api/v1/users/{userLogin}/rights");
-        var rightResponse = JsonSerializer.Deserialize<UserRoleResponse>(await response.Content.ReadAsStringAsync());
-        var result2 = rightResponse.Data.Select(x => $"RequestRight,{x.Id}").ToList();
+        var result2 = await GetUserPermissionsInternalAsync($"api/v1/users/{userLogin}/rights", x => $"RequestRight,{x.Id}");
 
         return result1.Concat(result2).ToList();
     }
 
-    public async Task AddUserPermissions(string userLogin, IEnumerable<string> rightIds)
+    private async Task<IEnumerable<string>> GetUserPermissionsInternalAsync(string url, Func<RoleResponseData, string> builder)
+    {
+        var requestResult = await GetAsync<UserRoleResponse>(url);
+
+        if (!requestResult.IsSuccess)
+        {
+            throw new InvalidOperationException($"Не удалось получить права пользователя: {requestResult.Error}");
+        }
+
+        if (!requestResult.Value.Success)
+        {
+            throw new InvalidOperationException($"Не удалось получить права пользователя: {requestResult.Value.ErrorText}");
+        }
+
+        if (requestResult.Value.Data == null)
+        {
+            throw new InvalidOperationException("Не удалось получить права пользователя");
+        }
+
+        return requestResult.Value.Data.Select(builder).ToList();
+    }
+
+    public async Task AddUserPermissionsAsync(string userLogin, IEnumerable<string> rightIds)
     {
         //проверяем что пользователь не залочен.
-        var response = await _httpClient.GetAsync($"api/v1/users/all");
+        var response = await _httpClient.GetAsync("api/v1/users/all");
         var userResponse = JsonSerializer.Deserialize<UserResponse>(await response.Content.ReadAsStringAsync());
         var user = userResponse.Data.FirstOrDefault(x => x.Login == userLogin);
 
@@ -137,10 +209,10 @@ public class Connector : IConnector
         }
     }
 
-    public async Task RemoveUserPermissions(string userLogin, IEnumerable<string> rightIds)
+    public async Task RemoveUserPermissionsAsync(string userLogin, IEnumerable<string> rightIds)
     {
         //проверяем что пользователь не залочен.
-        var response = await _httpClient.GetAsync($"api/v1/users/all");
+        var response = await _httpClient.GetAsync("api/v1/users/all");
         var userResponse = JsonSerializer.Deserialize<UserResponse>(await response.Content.ReadAsStringAsync());
         var user = userResponse.Data.FirstOrDefault(d => d.Login == userLogin);
 
@@ -187,30 +259,59 @@ public class Connector : IConnector
         return props;
     }
 
-    public async Task<IEnumerable<UserProperty>> GetUserProperties(string userLogin)
+    /// <summary>
+    /// Возвращает список свойств пользователя.
+    /// </summary>
+    /// <param name="userLogin"></param>
+    /// <returns></returns>
+    /// <exception cref="InvalidOperationException"></exception>
+    /// <exception cref="UserNotFoundException"></exception>
+    /// <exception cref="UserLockedException"></exception>
+    public async Task<IEnumerable<UserProperty>> GetUserPropertiesAsync(string userLogin)
     {
-        var response = await _httpClient.GetAsync($"api/v1/users/{userLogin}");
-        var userResponse = JsonSerializer.Deserialize<UserPropertyResponse>(await response.Content.ReadAsStringAsync());
+        var getUserResult = await GetAsync<UserPropertyResponse>($"api/v1/users/{userLogin}");
 
-        var user = userResponse?.Data ?? throw new NullReferenceException($"Пользователь {userLogin} не найден");
+        if (!getUserResult.IsSuccess)
+        {
+            throw new InvalidOperationException($"Не удалось получить свойства пользователя: {getUserResult.Error}");
+        }
+
+        if (getUserResult.Value.Data == null)
+        {
+            throw new UserNotFoundException($"Пользователь {userLogin} не найден");
+        }
+
+        var user = getUserResult.Value.Data;
 
         if (user.Status == "Lock")
         {
-            throw new Exception($"Невозможно получить свойства, пользователь {userLogin} залочен");
+            throw new UserLockedException($"Невозможно получить свойства, пользователь {userLogin} залочен");
         }
 
         return user.GetType().GetProperties()
             .Select(x => new UserProperty(x.Name, x.GetValue(user) as string));
     }
 
-    public async Task UpdateUserProperties(IEnumerable<UserProperty> properties, string userLogin)
+    public async Task UpdateUserPropertiesAsync(IEnumerable<UserProperty> properties, string userLogin)
     {
-        var response = await _httpClient.GetAsync($"api/v1/users/{userLogin}");
-        var userResponse = JsonSerializer.Deserialize<UserPropertyResponse>(await response.Content.ReadAsStringAsync());
+        var getUserResult = await GetAsync<UserPropertyResponse>($"api/v1/users/{userLogin}");
 
-        var user = userResponse?.Data ?? throw new NullReferenceException($"Пользователь {userLogin} не найден");
+        if (!getUserResult.IsSuccess)
+        {
+            throw new InvalidOperationException($"Не удалось получить свойства пользователя: {getUserResult.Error}");
+        }
+
+        if (getUserResult.Value.Data == null)
+        {
+            throw new UserNotFoundException($"Пользователь {userLogin} не найден");
+        }
+
+        var user = getUserResult.Value.Data;
+
         if (user.Status == "Lock")
-            throw new Exception($"Невозможно обновить свойства, пользователь {userLogin} залочен");
+        {
+            throw new UserLockedException($"Невозможно обновить свойства, пользователь {userLogin} залочен");
+        }
 
         foreach (var property in properties)
         {
@@ -227,16 +328,19 @@ public class Connector : IConnector
         await _httpClient.PutAsync("api/v1/users/edit", content);
     }
 
-    public async Task<bool> IsUserExists(string userLogin)
+    public async Task<bool> IsUserExistsAsync(string userLogin)
     {
-        var response = await _httpClient.GetAsync($"api/v1/users/all");
-        var userResponse = JsonSerializer.Deserialize<UserResponse>(await response.Content.ReadAsStringAsync());
-        var user = userResponse?.Data.FirstOrDefault(x => x.Login == userLogin);
+        var requestResult = await GetAsync<UserResponse>("api/v1/users/all");
+        if (!requestResult.IsSuccess)
+        {
+            throw new InvalidOperationException($"Не удалось проверить наличие пользователя: {requestResult.Error}");
+        }
 
+        var user = requestResult.Value.Data.FirstOrDefault(x => x.Login == userLogin);
         return user != null;
     }
 
-    public async Task CreateUser(UserToCreate user)
+    public async Task CreateUserAsync(UserToCreate user)
     {
         var newUser = new CreateUserDto()
         {
@@ -256,38 +360,77 @@ public class Connector : IConnector
 
         var content = new StringContent(JsonSerializer.Serialize(newUser), Encoding.UTF8, "application/json");
         await _httpClient.PostAsync("api/v1/users/create", content);
+
+        //var result = await PostAsync<CreateUserDto>();
     }
 
-    private async Task<TR> PostRequestAsync<TD, TR>(string endpoint, TD data)
+    private async Task<RequestResult<T>> PostAsync<T, TT>(string endpoint, TT data)
     {
         try
         {
-            var content = new StringContent(JsonSerializer.Serialize(data), Encoding.UTF8, "application/json");
-            var response = await _httpClient.PostAsync(endpoint, content);
+            var requestBody = new StringContent(JsonSerializer.Serialize(data), Encoding.UTF8, "application/json");
+            var response = await _httpClient.PostAsync(endpoint, requestBody);
             response.EnsureSuccessStatusCode();
-            var reponse = await response.Content.ReadAsStringAsync();
-            return JsonSerializer.Deserialize<TR>(reponse);
+
+            var responseBody = await response.Content.ReadAsStringAsync();
+
+            if (string.IsNullOrEmpty(responseBody))
+            {
+                return RequestResult<T>.Failed("Неверный ответ от сервера");
+            }
+
+            var result = JsonSerializer.Deserialize<T>(responseBody);
+
+            return RequestResult<T>.Successful(result);
+        }
+        catch (HttpRequestException ex)
+        {
+            Logger.Error($"Ошибка HTTP-запрос к {endpoint}: {ex.Message}");
+            return RequestResult<T>.Failed($"Ошибка {ex.StatusCode} при запросе к серверу");
+        }
+        catch (JsonException ex)
+        {
+            Logger.Error($"Ошибка десериализации ответа сервера: {ex.Message}");
+            return RequestResult<T>.Failed("Ошибка обработки ответа сервера");
         }
         catch (Exception ex)
         {
             Logger.Error($"Ошибка при запросе к {endpoint}: {ex.Message}");
-            throw;
+            return RequestResult<T>.Failed("Возникла ошибка при запросе к серверу");
         }
     }
 
-    private async Task<T> SendRequestAsync<T>(string endpoint)
+    private async Task<RequestResult<T>> GetAsync<T>(string endpoint)
     {
         try
         {
             var response = await _httpClient.GetAsync(endpoint);
             response.EnsureSuccessStatusCode();
+
             var content = await response.Content.ReadAsStringAsync();
-            return JsonSerializer.Deserialize<T>(content);
+
+            if (string.IsNullOrEmpty(content))
+            {
+                return RequestResult<T>.Failed("Неверный ответ от сервера");
+            }
+
+            var result = JsonSerializer.Deserialize<T>(content);
+            return RequestResult<T>.Successful(result);
+        }
+        catch (HttpRequestException ex)
+        {
+            Logger.Error($"Ошибка HTTP-запрос к {endpoint}: {ex.Message}");
+            return RequestResult<T>.Failed($"Ошибка {ex.StatusCode} при запросе к серверу");
+        }
+        catch (JsonException ex)
+        {
+            Logger.Error($"Ошибка десериализации ответа сервера: {ex.Message}");
+            return RequestResult<T>.Failed("Ошибка обработки ответа сервера");
         }
         catch (Exception ex)
         {
             Logger.Error($"Ошибка при запросе к {endpoint}: {ex.Message}");
-            throw;
+            return RequestResult<T>.Failed("Возникла ошибка при запросе к серверу");
         }
     }
 

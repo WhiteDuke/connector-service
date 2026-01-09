@@ -14,5 +14,5 @@ internal class TokenResponse
     public string ErrorText { get; set; }
     
     [JsonPropertyName("count")]
-    public object Count { get; set; }
+    public string Count { get; set; }
 }

@@ -28,7 +28,7 @@ public class ConnectorTests : IAsyncLifetime
     [Fact]
     public async Task GetAllPermissions_Ok()
     {
-        var permissions = (await _connector.GetAllPermissions()).ToList();
+        var permissions = (await _connector.GetAllPermissionsAsync()).ToList();
         Assert.NotNull(permissions);
 
         var itRole9 = permissions.FirstOrDefault(p => p.Name == "ITRole9");
@@ -44,7 +44,7 @@ public class ConnectorTests : IAsyncLifetime
     public async Task GetUserPermissions_Ok()
     {
         const string login = "Login3";
-        var permissions = (await _connector.GetUserPermissions(login)).ToList();
+        var permissions = (await _connector.GetUserPermissionsAsync(login)).ToList();
 
         Assert.NotNull(permissions);
         Assert.NotNull(permissions.FirstOrDefault(s => s.Contains("ItRole")));
@@ -57,15 +57,15 @@ public class ConnectorTests : IAsyncLifetime
         const string login = "Login7";
         const string userRole = "ItRole,5";
         const string userRight = "RequestRight,5";
-        await _connector.AddUserPermissions(login, new List<string>(){userRole, userRight});
+        await _connector.AddUserPermissionsAsync(login, new List<string>(){userRole, userRight});
 
-        var userPermissions = (await _connector.GetUserPermissions(login)).ToList();
+        var userPermissions = (await _connector.GetUserPermissionsAsync(login)).ToList();
         Assert.NotNull(userPermissions.FirstOrDefault(x => x.Contains(userRole)));
         Assert.NotNull(userPermissions.FirstOrDefault(x => x.Contains(userRight)));
 
-        await _connector.RemoveUserPermissions(login, new List<string>(){userRole, userRight});
+        await _connector.RemoveUserPermissionsAsync(login, new List<string>(){userRole, userRight});
 
-        userPermissions = (await _connector.GetUserPermissions(login)).ToList();
+        userPermissions = (await _connector.GetUserPermissionsAsync(login)).ToList();
         Assert.Null(userPermissions.FirstOrDefault(x => x.Contains(userRole)));
         Assert.Null(userPermissions.FirstOrDefault(x => x.Contains(userRight)));
     }
@@ -83,7 +83,7 @@ public class ConnectorTests : IAsyncLifetime
     public async Task Get_UpdateUserProperties_Ok()
     {
         const string login = "Login3";
-        var userProperties = (await _connector.GetUserProperties(login)).ToList();
+        var userProperties = (await _connector.GetUserPropertiesAsync(login)).ToList();
         Assert.NotNull(userProperties);
 
         var firstNameProperty = userProperties.FirstOrDefault(p => p.Name == "firstName");
@@ -99,9 +99,9 @@ public class ConnectorTests : IAsyncLifetime
             new UserProperty("firstName", "FirstName13"),
             new UserProperty("telephoneNumber", "TelephoneNumber13"),
         };
-        await _connector.UpdateUserProperties(userProps, login);
+        await _connector.UpdateUserPropertiesAsync(userProps, login);
 
-        userProperties = (await _connector.GetUserProperties(login)).ToList();
+        userProperties = (await _connector.GetUserPropertiesAsync(login)).ToList();
         Assert.NotNull(userProperties);
 
         firstNameProperty = userProperties.FirstOrDefault(p => p.Name == "firstName");
@@ -118,7 +118,7 @@ public class ConnectorTests : IAsyncLifetime
     {
         const string login = "Login100";
 
-        var isUser = await _connector.IsUserExists(login);
+        var isUser = await _connector.IsUserExistsAsync(login);
         Assert.False(isUser);
 
         var user = new UserToCreate(login, "Password100")
@@ -133,9 +133,9 @@ public class ConnectorTests : IAsyncLifetime
             }
         };
 
-        await _connector.CreateUser(user);
+        await _connector.CreateUserAsync(user);
 
-        isUser = await _connector.IsUserExists(login);
+        isUser = await _connector.IsUserExistsAsync(login);
         Assert.True(isUser);
     }
 }
