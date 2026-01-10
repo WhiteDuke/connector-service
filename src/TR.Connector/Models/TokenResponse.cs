@@ -2,7 +2,7 @@
 
 namespace TR.Connector.Models;
 
-internal class TokenResponse
+public class TokenResponse
 {
     [JsonPropertyName("data")]
     public TokenResponseData Data { get; set; }
@@ -14,5 +14,5 @@ internal class TokenResponse
     public string ErrorText { get; set; }
     
     [JsonPropertyName("count")]
-    public string Count { get; set; }
+    public int Count { get; set; }
 }

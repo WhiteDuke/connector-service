@@ -2,7 +2,7 @@
 
 namespace TR.Connector.Models;
 
-internal class TokenResponseData
+public class TokenResponseData
 {
     [JsonPropertyName("access_token")]
     public string AccessToken { get; set; }

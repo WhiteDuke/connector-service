@@ -2,7 +2,7 @@
 
 namespace TR.Connector.Models;
 
-internal class RoleResponse
+public class RoleResponse
 {
     [JsonPropertyName("data")]
     public List<RoleResponseData> Data { get; set; }
