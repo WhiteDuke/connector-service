@@ -8,7 +8,10 @@ public sealed class UserProperty
     public UserProperty(string name, string value)
     {
         if (string.IsNullOrEmpty(name))
+        {
             throw new Exception("name");
+        }
+
         Name = name;
         Value = value;
     }

@@ -2,7 +2,7 @@
 
 namespace TR.Connector.Models;
 
-internal class UserPropertyResponse
+public class UserPropertyResponse
 {
     [JsonPropertyName("data")]
     public UserPropertyData Data { get; set; }

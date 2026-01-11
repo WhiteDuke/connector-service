@@ -13,7 +13,7 @@ namespace TR.Connector.Tests;
 public class ConnectorTests : IAsyncLifetime
 {
     private readonly IConnector _connector;
-    private readonly string _connectorString = "url=http://localhost:5000;login=login;password=password";
+    private const string ConnectorString = "url=http://localhost:5000;login=login;password=password";
     private readonly WireMockServer _server;
     private const int MockServerStartTimeOutInSeconds = 2;
 
@@ -42,11 +42,14 @@ public class ConnectorTests : IAsyncLifetime
             }
         };
 
-        _server.Given(Request.Create().UsingPost()
-                .WithPath("/api/v1/login")
-            )
+        _server.Given(
+                Request
+                    .Create()
+                    .UsingPost()
+                    .WithPath("/api/v1/login"))
             .RespondWith(
-                Response.Create()
+                Response
+                    .Create()
                     .WithStatusCode(200)
                     .WithHeader("Content-Type", "application/json")
                     .WithBody(JsonSerializer.Serialize(tokenResponse))
@@ -56,7 +59,7 @@ public class ConnectorTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         await Task.Delay(TimeSpan.FromSeconds(MockServerStartTimeOutInSeconds));
-        await _connector.StartUpAsync(_connectorString);
+        await _connector.StartUpAsync(ConnectorString);
     }
 
     public Task DisposeAsync()
@@ -131,7 +134,55 @@ public class ConnectorTests : IAsyncLifetime
     [Fact]
     public async Task GetUserPermissions_Ok()
     {
+        var rightsForResponse = new RoleResponse
+        {
+            Count = 1,
+            Data =
+            [
+                new RoleResponseData
+                {
+                    CorporatePhoneNumber = "8 800 2000 500",
+                    Id = 5,
+                    Name = "RequestRight5"
+                }
+            ],
+            Success = true
+        };
+        
+        var rolesForResponse = new RoleResponse
+        {
+            Count = 1,
+            Data =
+            [
+                new RoleResponseData
+                {
+                    CorporatePhoneNumber = "8 800 2000 550",
+                    Id = 9,
+                    Name = "ITRole9"
+                }
+            ],
+            Success = true
+        }; 
+
         const string login = "Login3";
+
+        _server.Given(Request.Create()
+                .UsingGet()
+                .WithPath($"/api/v1/users/{login}/roles"))
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody(JsonSerializer.Serialize(rolesForResponse)));
+
+        _server.Given(Request.Create()
+                .UsingGet()
+                .WithPath($"/api/v1/users/{login}/rights"))
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody(JsonSerializer.Serialize(rightsForResponse)));
+
+        
         var permissions = (await _connector.GetUserPermissionsAsync(login)).ToList();
 
         Assert.NotNull(permissions);
@@ -145,13 +196,128 @@ public class ConnectorTests : IAsyncLifetime
         const string login = "Login7";
         const string userRole = "ItRole,5";
         const string userRight = "RequestRight,5";
+        
+        var userResponse = new UserPropertyResponse()
+        {
+            Count = 1,
+            Data = new UserPropertyData()
+            {
+                FirstName = "first name",
+                IsLead = true,
+                LastName = "last name",
+                Login = "Login7",
+                MiddleName = "middle name",
+                Status = "Unlock",
+                TelephoneNumber = "8 800 2000 500"
+            },
+            Success = true
+        };
+
+        _server.Given(Request.Create()
+                .UsingGet()
+                .WithPath($"/api/v1/users/{login}"))
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody(JsonSerializer.Serialize(userResponse)));
+
+        _server
+            .Given(Request.Create().UsingPut().WithPath($"/api/v1/users/{login}/add/role/*"))
+            .RespondWith(Response.Create().WithStatusCode(200));
+
+        _server
+            .Given(Request.Create().UsingPut().WithPath($"/api/v1/users/{login}/add/right/*"))
+            .RespondWith(Response.Create().WithStatusCode(200));
+
+        _server
+            .Given(Request.Create().UsingDelete().WithPath($"/api/v1/users/{login}/drop/role/*"))
+            .RespondWith(Response.Create().WithStatusCode(200));
+
+        _server
+            .Given(Request.Create().UsingDelete().WithPath($"/api/v1/users/{login}/drop/right/*"))
+            .RespondWith(Response.Create().WithStatusCode(200));
+
         await _connector.AddUserPermissionsAsync(login, new List<string> {userRole, userRight});
+
+        var rightsForResponse = new RoleResponse
+        {
+            Count = 1,
+            Data =
+            [
+                new RoleResponseData
+                {
+                    CorporatePhoneNumber = "8 800 2000 500",
+                    Id = 5,
+                    Name = "RequestRight"
+                }
+            ],
+            Success = true
+        };
+        
+        var rolesForResponse = new RoleResponse
+        {
+            Count = 1,
+            Data =
+            [
+                new RoleResponseData
+                {
+                    CorporatePhoneNumber = "8 800 2000 550",
+                    Id = 5,
+                    Name = "ITRole9"
+                }
+            ],
+            Success = true
+        }; 
+
+        var rolesRequestMapping = _server.Given(Request.Create()
+                .UsingGet()
+                .WithPath($"/api/v1/users/{login}/roles"));
+
+        rolesRequestMapping.RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody(JsonSerializer.Serialize(rolesForResponse)));
+
+        var rightRequestMapping = _server.Given(Request.Create()
+                .UsingGet()
+                .WithPath($"/api/v1/users/{login}/rights"));
+
+        rightRequestMapping.RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody(JsonSerializer.Serialize(rightsForResponse)));
 
         var userPermissions = (await _connector.GetUserPermissionsAsync(login)).ToList();
         Assert.NotNull(userPermissions.FirstOrDefault(x => x.Contains(userRole)));
         Assert.NotNull(userPermissions.FirstOrDefault(x => x.Contains(userRight)));
 
         await _connector.RemoveUserPermissionsAsync(login, new List<string> {userRole, userRight});
+
+        var emptyRolesResponse = new RoleResponse()
+        {
+            Count = 0,
+            Success = true,
+            Data = []
+        };
+
+        _server.DeleteMapping(rolesRequestMapping.Guid);
+        _server.DeleteMapping(rightRequestMapping.Guid);
+
+        _server.Given(Request.Create()
+                .UsingGet()
+                .WithPath($"/api/v1/users/{login}/roles"))
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody(JsonSerializer.Serialize(emptyRolesResponse)));
+
+        _server.Given(Request.Create()
+                .UsingGet()
+                .WithPath($"/api/v1/users/{login}/rights"))
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody(JsonSerializer.Serialize(emptyRolesResponse)));
 
         userPermissions = (await _connector.GetUserPermissionsAsync(login)).ToList();
         Assert.Null(userPermissions.FirstOrDefault(x => x.Contains(userRole)));
@@ -164,39 +330,81 @@ public class ConnectorTests : IAsyncLifetime
         var allProperties = _connector.GetAllProperties();
 
         Assert.NotNull(allProperties);
-        Assert.NotNull(allProperties.FirstOrDefault(p => p.Name.Contains("isLead")));
+        Assert.NotNull(allProperties.FirstOrDefault(p => p.Name.Contains("IsLead")));
     }
 
     [Fact]
     public async Task Get_UpdateUserProperties_Ok()
     {
         const string login = "Login3";
+
+        var userResponse = new UserPropertyResponse()
+        {
+            Count = 1,
+            Data = new UserPropertyData()
+            {
+                FirstName = "FirstName3",
+                IsLead = true,
+                LastName = "LastName3",
+                Login = "Login3",
+                MiddleName = "MiddleName3",
+                Status = "Unlock",
+                TelephoneNumber = "TelephoneNumber3"
+            },
+            Success = true
+        };
+            
+        var getUserMapping = _server.Given(Request.Create()
+                .UsingGet()
+                .WithPath($"/api/v1/users/{login}"));
+
+        getUserMapping.RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody(JsonSerializer.Serialize(userResponse)));
+
         var userProperties = (await _connector.GetUserPropertiesAsync(login)).ToList();
         Assert.NotNull(userProperties);
 
-        var firstNameProperty = userProperties.FirstOrDefault(p => p.Name == "firstName");
+        var firstNameProperty = userProperties.FirstOrDefault(p => p.Name == "FirstName");
         Assert.NotNull(firstNameProperty);
         Assert.Equal("FirstName3", firstNameProperty.Value);
         
-        var telephoneNumberProperty = userProperties.FirstOrDefault(p => p.Name == "telephoneNumber");
+        var telephoneNumberProperty = userProperties.FirstOrDefault(p => p.Name == "TelephoneNumber");
         Assert.NotNull(telephoneNumberProperty);
         Assert.Equal("TelephoneNumber3", telephoneNumberProperty.Value);
 
+        _server
+            .Given(Request.Create().UsingPut().WithPath("/api/v1/users/edit"))
+            .RespondWith(Response.Create().WithStatusCode(200));
+
         var userProps = new List<UserProperty>
         {
-            new UserProperty("firstName", "FirstName13"),
-            new UserProperty("telephoneNumber", "TelephoneNumber13"),
+            new("FirstName", "FirstName13"),
+            new("TelephoneNumber", "TelephoneNumber13"),
         };
         await _connector.UpdateUserPropertiesAsync(userProps, login);
+
+        userResponse.Data.FirstName = "FirstName13";
+        userResponse.Data.TelephoneNumber = "TelephoneNumber13";
+        _server.DeleteMapping(getUserMapping.Guid);
+        
+        _server.Given(Request.Create()
+            .UsingGet()
+            .WithPath($"/api/v1/users/{login}"))
+        .RespondWith(Response.Create()
+            .WithStatusCode(200)
+            .WithHeader("Content-Type", "application/json")
+            .WithBody(JsonSerializer.Serialize(userResponse)));
 
         userProperties = (await _connector.GetUserPropertiesAsync(login)).ToList();
         Assert.NotNull(userProperties);
 
-        firstNameProperty = userProperties.FirstOrDefault(p => p.Name == "firstName");
+        firstNameProperty = userProperties.FirstOrDefault(p => p.Name == "FirstName");
         Assert.NotNull(firstNameProperty);
         Assert.Equal("FirstName13", firstNameProperty.Value);
         
-        telephoneNumberProperty = userProperties.FirstOrDefault(p => p.Name == "telephoneNumber");
+        telephoneNumberProperty = userProperties.FirstOrDefault(p => p.Name == "TelephoneNumber");
         Assert.NotNull(telephoneNumberProperty);
         Assert.Equal("TelephoneNumber13", telephoneNumberProperty.Value);
     }
@@ -206,22 +414,62 @@ public class ConnectorTests : IAsyncLifetime
     {
         const string login = "Login100";
 
+        var userResponse = new UserPropertyResponse()
+        {
+            Count = 0,
+            Data = null,
+            Success = true
+        };
+
+        var userMapping = _server.Given(Request.Create()
+            .UsingGet()
+            .WithPath($"/api/v1/users/{login}"));
+    
+        userMapping.RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody(JsonSerializer.Serialize(userResponse)));
+
         var isUser = await _connector.IsUserExistsAsync(login);
         Assert.False(isUser);
 
-        var user = new UserToCreate(login, "Password100")
+        var userToCreate = new UserToCreate(login, "Password100")
         {
             Properties = new List<UserProperty>
             {
-                new UserProperty("firstName", "FirstName100"),
-                new UserProperty("lastName", ""),
-                new UserProperty("middleName", ""),
-                new UserProperty("telephoneNumber", ""),
-                new UserProperty("isLead", ""),
+                new("firstName", "FirstName100"),
+                new("lastName", ""),
+                new("middleName", ""),
+                new("telephoneNumber", ""),
+                new("isLead", ""),
             }
         };
 
-        await _connector.CreateUserAsync(user);
+        _server.Given(Request.Create()
+                .UsingPost()
+                .WithPath("/api/v1/users/create")
+                .WithBody(JsonSerializer.Serialize(userToCreate)))
+            .RespondWith(Response.Create().WithStatusCode(200));
+
+        _server.DeleteMapping(userMapping.Guid);
+        userResponse.Data = new UserPropertyData()
+        {
+            FirstName = "FirstName100",
+            LastName = "",
+            MiddleName = "",
+            TelephoneNumber = "",
+            IsLead = false
+        };
+        
+        await _connector.CreateUserAsync(userToCreate);
+
+        _server.Given(Request.Create()
+            .UsingGet()
+            .WithPath($"/api/v1/users/{login}"))
+        .RespondWith(Response.Create()
+            .WithStatusCode(200)
+            .WithHeader("Content-Type", "application/json")
+            .WithBody(JsonSerializer.Serialize(userResponse)));
 
         isUser = await _connector.IsUserExistsAsync(login);
         Assert.True(isUser);
