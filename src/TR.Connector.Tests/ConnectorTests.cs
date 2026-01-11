@@ -1,4 +1,5 @@
 using System.Text.Json;
+using TR.Connector.Exceptions;
 using TR.Connector.Models;
 using TR.Connectors.Api.Entities;
 using TR.Connectors.Api.Interfaces;
@@ -322,6 +323,31 @@ public class ConnectorTests : IAsyncLifetime
         userPermissions = (await _connector.GetUserPermissionsAsync(login)).ToList();
         Assert.Null(userPermissions.FirstOrDefault(x => x.Contains(userRole)));
         Assert.Null(userPermissions.FirstOrDefault(x => x.Contains(userRight)));
+    }
+
+    [Fact]
+    public async Task Add_Drop_Permissions_UserNotFoundExceptionThrown()
+    {
+        const string login = "Login7";
+        const string userRole = "ItRole,5";
+        const string userRight = "RequestRight,5";
+        
+        var userResponse = new UserPropertyResponse()
+        {
+            Count = 0,
+            Data = null,
+            Success = true
+        };
+
+        _server.Given(Request.Create()
+                .UsingGet()
+                .WithPath($"/api/v1/users/{login}"))
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody(JsonSerializer.Serialize(userResponse)));
+
+        await Assert.ThrowsAsync<UserNotFoundException>(() => _connector.AddUserPermissionsAsync(login, new List<string> {userRole, userRight}));
     }
 
     [Fact]
